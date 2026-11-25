@@ -3,8 +3,6 @@ name: Build Mobile Apps (Android APK & iOS IPA)
 on:
   push:
     branches: [main, master]
-  pull_request:
-    branches: [main, master]
   workflow_dispatch:
 
 concurrency:
@@ -17,21 +15,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: pnpm/action-setup@v4
         with:
           version: 10
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Typecheck, Test & Build Web
-        run: |
+      - run: pnpm install --frozen-lockfile
+      - run: |
           pnpm lint
           pnpm test
           pnpm build
@@ -42,59 +34,62 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: pnpm/action-setup@v4
         with:
           version: 10
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
+      - name: Install Android SDK (manual, auto-accept licenses)
         run: |
-          sdkmanager "platforms;android-34" "build-tools;34.0.0" "cmake;3.22.1"
+          SDK="$HOME/android-sdk"
+          mkdir -p "$SDK/cmdline-tools"
+          curl -L --retry 3 -o /tmp/cmdline-tools.zip \
+            "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+          unzip -q /tmp/cmdline-tools.zip -d "$SDK/cmdline-tools"
+          mv "$SDK/cmdline-tools/cmdline-tools" "$SDK/cmdline-tools/latest"
+          export ANDROID_HOME="$SDK"
+          export ANDROID_SDK_ROOT="$SDK"
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$SDK" --licenses > /dev/null
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$SDK" \
+            "platform-tools" "platforms;android-34" "build-tools;34.0.0" "cmake;3.22.1" "ndk;25.1.8937393"
+          echo "ANDROID_HOME=$SDK" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$SDK" >> $GITHUB_ENV
 
       - name: Cache OpenCV Android SDK
-        id: opencv-android-cache
+        id: opencv-cache
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/opencv-android-sdk
           key: opencv-android-sdk-4.10.0
 
       - name: Download OpenCV 4.10.0 Android SDK
-        if: steps.opencv-android-cache.outputs.cache-hit != 'true'
+        if: steps.opencv-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p "${{ runner.temp }}/opencv-android-sdk"
-          curl -L --retry 3 --retry-delay 5 \
-            -o "${{ runner.temp }}/opencv-android-sdk.zip" \
+          curl -L --retry 3 --retry-delay 5 -o "${{ runner.temp }}/ocv.zip" \
             "https://sourceforge.net/projects/opencvlibrary/files/4.10.0/opencv-4.10.0-android-sdk.zip/download"
-          unzip -q "${{ runner.temp }}/opencv-android-sdk.zip" -d "${{ runner.temp }}/opencv-android-sdk"
+          unzip -q "${{ runner.temp }}/ocv.zip" -d "${{ runner.temp }}/opencv-android-sdk"
 
-      - name: Install JS dependencies & Sync Capacitor Android
+      - name: Sync Capacitor & Build Debug APK
+        env:
+          OPENCV_ANDROID_SDK: ${{ runner.temp }}/opencv-android-sdk/OpenCV-android-sdk/sdk/native/jni
         run: |
           pnpm install --frozen-lockfile
           pnpm build
           npx cap sync android
-
-      - name: Build Debug APK
-        env:
-          OPENCV_ANDROID_SDK: ${{ runner.temp }}/opencv-android-sdk/OpenCV-android-sdk/sdk/native/jni
-        run: |
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
           cd android
           chmod +x gradlew
           ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
-      - name: Upload Android APK
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: OmniSphere360-android-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
@@ -106,11 +101,9 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-
       - uses: pnpm/action-setup@v4
         with:
           version: 10
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -127,39 +120,27 @@ jobs:
         if: steps.opencv-ios-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p "${{ runner.temp }}/opencv-ios"
-          curl -L --retry 3 --retry-delay 5 \
-            -o "${{ runner.temp }}/opencv-ios.zip" \
+          curl -L --retry 3 --retry-delay 5 -o "${{ runner.temp }}/ocv-ios.zip" \
             "https://sourceforge.net/projects/opencvlibrary/files/4.10.0/opencv-4.10.0-ios-framework.zip/download"
-          unzip -q "${{ runner.temp }}/opencv-ios.zip" -d "${{ runner.temp }}/opencv-ios"
-          echo "--- extracted tree ---"
-          ls -la "${{ runner.temp }}/opencv-ios"
+          unzip -q "${{ runner.temp }}/ocv-ios.zip" -d "${{ runner.temp }}/opencv-ios"
+          find "${{ runner.temp }}/opencv-ios" -maxdepth 3 -name "*.framework" -type d
 
       - name: Stage OpenCV framework into plugin
         run: |
           SRC="${{ runner.temp }}/opencv-ios"
           DEST="packages/capacitor-omnisphere-stitcher/ios/Frameworks"
           mkdir -p "$DEST"
-          if [ -d "$SRC/opencv2.framework" ]; then
-            cp -R "$SRC/opencv2.framework" "$DEST/"
-          elif [ -d "$SRC/opencv-4.10.0-ios-framework/opencv2.framework" ]; then
-            cp -R "$SRC/opencv-4.10.0-ios-framework/opencv2.framework" "$DEST/"
-          else
-            FOUND=$(find "$SRC" -maxdepth 3 -name "opencv2.framework" -type d | head -n 1)
-            if [ -z "$FOUND" ]; then echo "opencv2.framework not found"; ls -R "$SRC" | head -n 50; exit 1; fi
-            cp -R "$FOUND" "$DEST/"
-          fi
+          FOUND=$(find "$SRC" -maxdepth 4 -name "opencv2.framework" -type d | head -n 1)
+          if [ -z "$FOUND" ]; then echo "::error::opencv2.framework not found"; find "$SRC" -maxdepth 3 | head -50; exit 1; fi
+          cp -R "$FOUND" "$DEST/"
           ls -la "$DEST"
 
-      - name: Install JS dependencies & Sync Capacitor iOS
+      - name: Sync Capacitor & Install Pods
         run: |
           pnpm install --frozen-lockfile
           pnpm build
           npx cap sync ios
-
-      - name: Verify Podfile has plugin + framework
-        run: |
-          grep -n "CapacitorOmnisphereStitcher" ios/App/Podfile || (echo "plugin pod missing"; exit 1)
-          ls -la packages/capacitor-omnisphere-stitcher/ios/Frameworks
+          grep -n "CapacitorOmnisphereStitcher" ios/App/Podfile
 
       - name: Build Unsigned iOS Archive
         run: |
@@ -172,25 +153,19 @@ jobs:
             -destination "generic/platform=iOS" \
             -archivePath build/OmniSphere360.xcarchive \
             archive \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
-            ENABLE_BITCODE=NO \
-            | tee build-xcodebuild.log | tail -n 120
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" \
+            2>&1 | tee build/xcodebuild.log | tail -n 150
 
       - name: Package Unsigned IPA
         run: |
           mkdir -p build/Payload
           APP_PATH=$(find build/OmniSphere360.xcarchive/Products/Applications -maxdepth 1 -name "*.app" -type d | head -n 1)
-          echo "App bundle: $APP_PATH"
+          echo "App: $APP_PATH"
           cp -R "$APP_PATH" build/Payload/
-          cd build
-          zip -qry OmniSphere360-unsigned.ipa Payload
+          cd build && zip -qry OmniSphere360-unsigned.ipa Payload
           ls -lh OmniSphere360-unsigned.ipa
 
-      - name: Upload iOS Unsigned IPA
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: OmniSphere360-ios-unsigned-ipa
           path: build/OmniSphere360-unsigned.ipa
@@ -201,5 +176,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ios-xcodebuild-log
-          path: build-xcodebuild.log
+          path: build/xcodebuild.log
           if-no-files-found: ignore
