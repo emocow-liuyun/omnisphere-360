@@ -135,12 +135,20 @@ jobs:
           cp -R "$FOUND" ios/App/opencv/
           # Headers must live outside the .framework, otherwise Clang rejects them
           # as a non-modular include inside a framework module (-Werror).
-          mkdir -p ios/App/opencv/include
-          cp -R ios/App/opencv/opencv2.framework/Headers/. ios/App/opencv/include/
-          echo "--- headers ---"
-          ls ios/App/opencv/include | head -n 6
-          ls ios/App/opencv/include/opencv2 | head -n 8
+          # The framework's Headers dir holds flat <opencv2/*.h> plus opencv.hpp,
+          # so it is exposed as include/opencv2/ for <opencv2/opencv.hpp> imports.
+          mkdir -p ios/App/opencv/include/opencv2
+          cp -R "$FOUND/Headers/." ios/App/opencv/include/opencv2/
+          if [ ! -f ios/App/opencv/include/opencv2/opencv.hpp ]; then
+            # Some packages nest a real opencv2/ directory instead
+            rm -rf ios/App/opencv/include/opencv2
+            cp -R "$FOUND/Headers" ios/App/opencv/include/
+          fi
+          echo "--- include tree ---"
+          ls ios/App/opencv/include | head -n 5
+          ls ios/App/opencv/include/opencv2 | head -n 5
           test -f ios/App/opencv/include/opencv2/opencv.hpp && echo "opencv.hpp OK"
+          test -d ios/App/opencv/include/opencv2/stitching && echo "stitching OK"
 
       - name: Sync Capacitor & Install Pods
         run: |
