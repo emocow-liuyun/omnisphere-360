@@ -1,0 +1,196 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   OmniSphere 360 — Galaxy-Inspired Darkroom UI Design System
+   Inspired by uiverse-io/galaxy CSS/Tailwind component patterns:
+   - Frosted darkroom glassmorphism
+   - Orbital neon shutter rings & conic-gradient loaders
+   - Tactile micro-interaction pills & switches
+   ========================================================================== */
+
+:root {
+  --galaxy-bg: #05070d;
+  --galaxy-surface: rgba(13, 18, 30, 0.68);
+  --galaxy-border: rgba(148, 163, 184, 0.18);
+  --galaxy-cyan: #22d3ee;
+  --galaxy-indigo: #6366f1;
+  --galaxy-emerald: #34d399;
+  --galaxy-amber: #fbbf24;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--galaxy-bg);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .galaxy-orbit-ring-1,
+  .galaxy-orbit-ring-2,
+  .galaxy-orbit-ring-3 {
+    animation: none;
+  }
+}
+
+/* Galaxy Glass Pill */
+.galaxy-glass {
+  background: linear-gradient(
+    135deg,
+    rgba(17, 24, 39, 0.78) 0%,
+    rgba(9, 13, 24, 0.62) 100%
+  );
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+/* Galaxy Glowing Shutter Button (inspired by Uiverse Galaxy orbital buttons) */
+.galaxy-shutter-outer {
+  position: relative;
+  width: 84px;
+  height: 84px;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 30% 30%, rgba(34, 211, 238, 0.22), rgba(15, 23, 42, 0.9));
+  box-shadow:
+    0 0 28px rgba(34, 211, 238, 0.25),
+    inset 0 0 14px rgba(99, 102, 241, 0.25);
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s ease;
+}
+
+.galaxy-shutter-outer:active {
+  transform: scale(0.93);
+}
+
+.galaxy-shutter-outer.is-locked {
+  box-shadow:
+    0 0 36px rgba(52, 211, 153, 0.55),
+    inset 0 0 18px rgba(52, 211, 153, 0.35);
+}
+
+.galaxy-shutter-core {
+  width: 62px;
+  height: 62px;
+  border-radius: 9999px;
+  background: linear-gradient(145deg, #f8fafc 0%, #cbd5e1 100%);
+  box-shadow:
+    0 4px 14px rgba(0, 0, 0, 0.5),
+    inset 0 2px 4px rgba(255, 255, 255, 0.9);
+  transition: all 0.2s ease;
+}
+
+.galaxy-shutter-outer.is-capturing .galaxy-shutter-core {
+  transform: scale(0.82);
+  background: linear-gradient(145deg, #34d399 0%, #06b6d4 100%);
+}
+
+/* Galaxy Orbital Loader (inspired by Uiverse Galaxy 3D spinners) */
+.galaxy-orbit-loader {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  perspective: 800px;
+}
+
+.galaxy-orbit-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 3px solid transparent;
+}
+
+.galaxy-orbit-ring-1 {
+  border-bottom-color: #22d3ee;
+  animation: galaxy-rotate-1 1.2s linear infinite;
+}
+
+.galaxy-orbit-ring-2 {
+  border-right-color: #818cf8;
+  animation: galaxy-rotate-2 1.2s linear infinite;
+}
+
+.galaxy-orbit-ring-3 {
+  border-top-color: #34d399;
+  animation: galaxy-rotate-3 1.2s linear infinite;
+}
+
+@keyframes galaxy-rotate-1 {
+  0% {
+    transform: rotateX(35deg) rotateY(-45deg) rotateZ(0deg);
+  }
+  100% {
+    transform: rotateX(35deg) rotateY(-45deg) rotateZ(360deg);
+  }
+}
+
+@keyframes galaxy-rotate-2 {
+  0% {
+    transform: rotateX(50deg) rotateY(10deg) rotateZ(0deg);
+  }
+  100% {
+    transform: rotateX(50deg) rotateY(10deg) rotateZ(360deg);
+  }
+}
+
+@keyframes galaxy-rotate-3 {
+  0% {
+    transform: rotateX(35deg) rotateY(55deg) rotateZ(0deg);
+  }
+  100% {
+    transform: rotateX(35deg) rotateY(55deg) rotateZ(360deg);
+  }
+}
+
+/* Galaxy Neon Action Button */
+.galaxy-btn {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  backdrop-filter: blur(12px);
+  transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.galaxy-btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent 20%, rgba(34, 211, 238, 0.16) 50%, transparent 80%);
+  transform: translateX(-100%);
+  transition: transform 0.55s ease;
+}
+
+.galaxy-btn:hover::before {
+  transform: translateX(100%);
+}
+
+.galaxy-btn:active {
+  transform: scale(0.96);
+}
+
+/* Galaxy Segmented Switch */
+.galaxy-switch-track {
+  background: rgba(10, 15, 28, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+
+.galaxy-switch-thumb {
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.28), rgba(99, 102, 241, 0.32));
+  border: 1px solid rgba(34, 211, 238, 0.45);
+  box-shadow: 0 0 16px rgba(34, 211, 238, 0.25);
+}

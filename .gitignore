@@ -1,0 +1,19 @@
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.DS_Store
+
+# Android local & build artifacts
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/build/
+packages/capacitor-omnisphere-stitcher/android/build/
+packages/capacitor-omnisphere-stitcher/android/.cxx/
+
+# iOS Pods & build artifacts
+ios/App/Pods/
+ios/App/build/
+packages/capacitor-omnisphere-stitcher/ios/Frameworks/
