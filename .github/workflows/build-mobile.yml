@@ -125,26 +125,28 @@ jobs:
           unzip -q "${{ runner.temp }}/ocv-ios.zip" -d "${{ runner.temp }}/opencv-ios"
           find "${{ runner.temp }}/opencv-ios" -maxdepth 3 -name "*.framework" -type d
 
-      - name: Stage OpenCV framework into plugin
+      - name: Stage OpenCV framework for the host project
         run: |
           SRC="${{ runner.temp }}/opencv-ios"
-          DEST="packages/capacitor-omnisphere-stitcher/ios/Frameworks"
-          mkdir -p "$DEST"
           FOUND=$(find "$SRC" -maxdepth 4 -name "opencv2.framework" -type d | head -n 1)
           if [ -z "$FOUND" ]; then echo "::error::opencv2.framework not found"; find "$SRC" -maxdepth 3 | head -50; exit 1; fi
-          cp -R "$FOUND" "$DEST/"
-          ls -la "$DEST"
+          mkdir -p ios/App/opencv
+          rm -rf ios/App/opencv/opencv2.framework
+          cp -R "$FOUND" ios/App/opencv/
+          ls -la ios/App/opencv/opencv2.framework | head -n 20
+          ls ios/App/opencv/opencv2.framework/Headers | head -n 5
 
       - name: Sync Capacitor & Install Pods
         run: |
           pnpm install --frozen-lockfile
           pnpm build
           npx cap sync ios
-          # Raise iOS deployment target so the plugin podspec (14.0) and OpenCV resolve cleanly
-          /usr/bin/sed -i '' "s/^platform :ios, '1[0-9]\.[0-9]*'/platform :ios, '15.0'/" ios/App/Podfile
           grep -n "platform :ios" ios/App/Podfile
           grep -n "CapacitorOmnisphereStitcher" ios/App/Podfile
-          cd ios/App && pod install --repo-update
+          cd ios/App && pod install
+          echo "--- xcconfig checks ---"
+          grep -rn "opencv2" "Pods/Target Support Files/Pods-App/Pods-App.debug.xcconfig" || echo "opencv2 not in app xcconfig"
+          grep -rn "opencv2" "Pods/Target Support Files/CapacitorOmnisphereStitcher/CapacitorOmnisphereStitcher.debug.xcconfig" || echo "opencv2 not in pod xcconfig"
 
       - name: Build Unsigned iOS Archive
         run: |

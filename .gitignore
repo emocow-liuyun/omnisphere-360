@@ -17,3 +17,6 @@ packages/capacitor-omnisphere-stitcher/android/.cxx/
 ios/App/Pods/
 ios/App/build/
 packages/capacitor-omnisphere-stitcher/ios/Frameworks/
+
+# OpenCV iOS framework is staged by CI (large binary, not committed)
+ios/App/opencv/

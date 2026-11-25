@@ -12,9 +12,9 @@ Pod::Spec.new do |s|
 
   s.source = { :git => 'https://github.com/omnisphere/camera360.git', :tag => s.version.to_s }
   s.source_files = 'ios/Plugin/**/*.{swift,h,m,mm,cpp}'
-  s.ios.deployment_target = '14.0'
+  s.ios.deployment_target = '15.0'
 
-  # OpenCV 4.x iOS framework is a static framework; force static linkage for the pod.
+  # OpenCV is a static framework; keep the pod static so nothing needs embedding.
   s.static_framework = true
 
   s.dependency 'Capacitor'
@@ -23,7 +23,15 @@ Pod::Spec.new do |s|
 
   s.swift_version = '5.1'
 
+  # OpenCV 4.x iOS framework is staged by the build pipeline into <ios-project>/opencv,
+  # i.e. "${PODS_ROOT}/../opencv". Referencing it through build settings (instead of
+  # vendored_frameworks) keeps static-pod linking deterministic for the host app.
+  opencv_search = '"${PODS_ROOT}/../opencv"'
+  opencv_headers = '"${PODS_ROOT}/../opencv/opencv2.framework/Headers"'
+
   s.pod_target_xcconfig = {
+    'FRAMEWORK_SEARCH_PATHS' => "#{opencv_search} $(inherited)",
+    'HEADER_SEARCH_PATHS' => "#{opencv_headers} $(inherited)",
     'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17',
     'CLANG_CXX_LIBRARY' => 'libc++',
     'ENABLE_BITCODE' => 'NO',
@@ -31,17 +39,8 @@ Pod::Spec.new do |s|
     'GCC_ENABLE_CPP_RTTI' => 'YES'
   }
 
-  xcframework_path = File.join(__dir__, 'ios', 'Frameworks', 'opencv2.xcframework')
-  framework_path = File.join(__dir__, 'ios', 'Frameworks', 'opencv2.framework')
-
-  if File.exist?(xcframework_path)
-    s.vendored_frameworks = 'ios/Frameworks/opencv2.xcframework'
-  elsif File.exist?(framework_path)
-    s.vendored_frameworks = 'ios/Frameworks/opencv2.framework'
-  else
-    # Framework not staged locally; CI workflow downloads it before `pod install`.
-    # A missing vendored framework simply leaves the native stitcher unavailable
-    # and the app falls back to the on-device CPU/Canvas stitcher.
-    Pod::UI.warn('[OmniSphere] opencv2.framework not found in ios/Frameworks — native OpenCV stitcher will report unavailable.')
-  end
+  s.user_target_xcconfig = {
+    'FRAMEWORK_SEARCH_PATHS' => "#{opencv_search} $(inherited)",
+    'OTHER_LDFLAGS' => '-framework opencv2 $(inherited)'
+  }
 end
