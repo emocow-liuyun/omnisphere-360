@@ -186,7 +186,8 @@ public class OmniStitcherPlugin: CAPPlugin, CAPBridgedPlugin {
             var usedIndices: NSArray = []
             var outW: Int = 0
             var outH: Int = 0
-            var isFullSphere: Bool = false
+            // Objective-C BOOL* bridges as UnsafeMutablePointer<ObjCBool>, not <Bool>
+            var isFullSphere: ObjCBool = false
 
             let ok = OpenCVStitcher.stitchImages(
                 atPaths: filePaths,
@@ -213,7 +214,7 @@ public class OmniStitcherPlugin: CAPPlugin, CAPBridgedPlugin {
                     "outputPath": outputPath,
                     "width": outW,
                     "height": outH,
-                    "isFullSphere": isFullSphere,
+                    "isFullSphere": isFullSphere.boolValue,
                     "usedIndices": usedIndices,
                     "elapsedMs": elapsedMs
                 ])
