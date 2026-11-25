@@ -23,15 +23,17 @@ Pod::Spec.new do |s|
 
   s.swift_version = '5.1'
 
-  # OpenCV 4.x iOS framework is staged by the build pipeline into <ios-project>/opencv,
-  # i.e. "${PODS_ROOT}/../opencv". Referencing it through build settings (instead of
-  # vendored_frameworks) keeps static-pod linking deterministic for the host app.
-  opencv_search = '"${PODS_ROOT}/../opencv"'
-  opencv_headers = '"${PODS_ROOT}/../opencv/opencv2.framework/Headers"'
+  # The build pipeline stages OpenCV into the host project as:
+  #   ios/App/opencv/opencv2.framework   (binary, linked only)
+  #   ios/App/opencv/include/opencv2/... (plain headers, compiled against)
+  # Headers are kept OUT of the .framework so Clang does not treat them as a
+  # framework module lacking a module map (which is a hard error with -Werror).
+  opencv_fw = '"${PODS_ROOT}/../opencv"'
+  opencv_inc = '"${PODS_ROOT}/../opencv/include"'
 
   s.pod_target_xcconfig = {
-    'FRAMEWORK_SEARCH_PATHS' => "#{opencv_search} $(inherited)",
-    'HEADER_SEARCH_PATHS' => "#{opencv_headers} $(inherited)",
+    'FRAMEWORK_SEARCH_PATHS' => "#{opencv_fw} $(inherited)",
+    'HEADER_SEARCH_PATHS' => "#{opencv_inc} $(inherited)",
     'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17',
     'CLANG_CXX_LIBRARY' => 'libc++',
     'ENABLE_BITCODE' => 'NO',
@@ -40,7 +42,7 @@ Pod::Spec.new do |s|
   }
 
   s.user_target_xcconfig = {
-    'FRAMEWORK_SEARCH_PATHS' => "#{opencv_search} $(inherited)",
+    'FRAMEWORK_SEARCH_PATHS' => "#{opencv_fw} $(inherited)",
     'OTHER_LDFLAGS' => '-framework opencv2 $(inherited)'
   }
 end

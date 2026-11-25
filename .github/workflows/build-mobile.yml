@@ -131,10 +131,16 @@ jobs:
           FOUND=$(find "$SRC" -maxdepth 4 -name "opencv2.framework" -type d | head -n 1)
           if [ -z "$FOUND" ]; then echo "::error::opencv2.framework not found"; find "$SRC" -maxdepth 3 | head -50; exit 1; fi
           mkdir -p ios/App/opencv
-          rm -rf ios/App/opencv/opencv2.framework
+          rm -rf ios/App/opencv/opencv2.framework ios/App/opencv/include
           cp -R "$FOUND" ios/App/opencv/
-          ls -la ios/App/opencv/opencv2.framework | head -n 20
-          ls ios/App/opencv/opencv2.framework/Headers | head -n 5
+          # Headers must live outside the .framework, otherwise Clang rejects them
+          # as a non-modular include inside a framework module (-Werror).
+          mkdir -p ios/App/opencv/include
+          cp -R ios/App/opencv/opencv2.framework/Headers/. ios/App/opencv/include/
+          echo "--- headers ---"
+          ls ios/App/opencv/include | head -n 6
+          ls ios/App/opencv/include/opencv2 | head -n 8
+          test -f ios/App/opencv/include/opencv2/opencv.hpp && echo "opencv.hpp OK"
 
       - name: Sync Capacitor & Install Pods
         run: |
@@ -151,6 +157,7 @@ jobs:
       - name: Build Unsigned iOS Archive
         run: |
           set -o pipefail
+          mkdir -p build
           xcodebuild \
             -workspace ios/App/App.xcworkspace \
             -scheme App \
@@ -160,7 +167,12 @@ jobs:
             -archivePath build/OmniSphere360.xcarchive \
             archive \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" \
-            2>&1 | tee build/xcodebuild.log | tail -n 150
+            > build/xcodebuild.log 2>&1 || true
+          echo "--- last 60 lines ---"
+          tail -n 60 build/xcodebuild.log
+          echo "--- errors ---"
+          grep -nE "(^|[[:space:]])error:" build/xcodebuild.log | head -n 30 || true
+          test -d build/OmniSphere360.xcarchive || (echo "::error::archive not produced"; exit 1)
 
       - name: Package Unsigned IPA
         run: |
