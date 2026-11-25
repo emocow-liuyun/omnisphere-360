@@ -1,0 +1,24 @@
+name: macOS Runner Probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe-13:
+    runs-on: macos-13
+    steps:
+      - run: |
+          echo "runner: ${{ runner.os }} ${{ runner.arch }}"
+          xcodebuild -version
+  probe-latest:
+    runs-on: macos-latest
+    steps:
+      - run: |
+          echo "runner: ${{ runner.os }} ${{ runner.arch }}"
+          xcodebuild -version
+  probe-15:
+    runs-on: macos-15
+    steps:
+      - run: |
+          echo "runner: ${{ runner.os }} ${{ runner.arch }}"
+          xcodebuild -version
