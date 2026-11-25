@@ -23,26 +23,35 @@ Pod::Spec.new do |s|
 
   s.swift_version = '5.1'
 
-  # The build pipeline stages OpenCV into the host project as:
-  #   ios/App/opencv/opencv2.framework   (binary, linked only)
-  #   ios/App/opencv/include/opencv2/... (plain headers, compiled against)
-  # Headers are kept OUT of the .framework so Clang does not treat them as a
-  # framework module lacking a module map (which is a hard error with -Werror).
-  opencv_fw = '"${PODS_ROOT}/../opencv"'
-  opencv_inc = '"${PODS_ROOT}/../opencv/include"'
+  # OpenCV is optional at link time: "OPENCV_IOS_ENABLED=1" makes the pod link the
+  # staged opencv2.framework; otherwise OpenCVStitcher.mm compiles with
+  # HAS_OPENCV_STITCHING undefined, the plugin reports unavailable, and the app
+  # falls back to the on-device CPU/Canvas stitcher.
+  if ENV['OPENCV_IOS_ENABLED'] == '1'
+    opencv_fw = '"${PODS_ROOT}/../opencv"'
+    opencv_inc = '"${PODS_ROOT}/../opencv/include"'
 
-  s.pod_target_xcconfig = {
-    'FRAMEWORK_SEARCH_PATHS' => "#{opencv_fw} $(inherited)",
-    'HEADER_SEARCH_PATHS' => "#{opencv_inc} $(inherited)",
-    'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17',
-    'CLANG_CXX_LIBRARY' => 'libc++',
-    'ENABLE_BITCODE' => 'NO',
-    'GCC_ENABLE_CPP_EXCEPTIONS' => 'YES',
-    'GCC_ENABLE_CPP_RTTI' => 'YES'
-  }
+    s.pod_target_xcconfig = {
+      'FRAMEWORK_SEARCH_PATHS' => "#{opencv_fw} $(inherited)",
+      'HEADER_SEARCH_PATHS' => "#{opencv_inc} $(inherited)",
+      'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17',
+      'CLANG_CXX_LIBRARY' => 'libc++',
+      'ENABLE_BITCODE' => 'NO',
+      'GCC_ENABLE_CPP_EXCEPTIONS' => 'YES',
+      'GCC_ENABLE_CPP_RTTI' => 'YES'
+    }
 
-  s.user_target_xcconfig = {
-    'FRAMEWORK_SEARCH_PATHS' => "#{opencv_fw} $(inherited)",
-    'OTHER_LDFLAGS' => '-framework opencv2 $(inherited)'
-  }
+    s.user_target_xcconfig = {
+      'FRAMEWORK_SEARCH_PATHS' => "#{opencv_fw} $(inherited)",
+      'OTHER_LDFLAGS' => '-framework opencv2 $(inherited)'
+    }
+  else
+    s.pod_target_xcconfig = {
+      'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17',
+      'CLANG_CXX_LIBRARY' => 'libc++',
+      'ENABLE_BITCODE' => 'NO',
+      'GCC_ENABLE_CPP_EXCEPTIONS' => 'YES',
+      'GCC_ENABLE_CPP_RTTI' => 'YES'
+    }
+  end
 end

@@ -1,5 +1,13 @@
 #import "OpenCVStitcher.h"
 
+// Apple's objc.h defines NO/YES as macros, but OpenCV stitching enums use the
+// identifiers NO (e.g. Blender::NO, ExposureCompensator::NO). Undefine them only
+// while pulling in OpenCV so the C++ enum names stay valid identifiers.
+#pragma push_macro("NO")
+#pragma push_macro("YES")
+#undef NO
+#undef YES
+
 #ifdef __has_include
 #if __has_include(<opencv2/stitching.hpp>)
 #define HAS_OPENCV_STITCHING 1
@@ -8,6 +16,9 @@
 #import <opencv2/stitching/warpers.hpp>
 #endif
 #endif
+
+#pragma pop_macro("YES")
+#pragma pop_macro("NO")
 
 @implementation OpenCVStitcher
 

@@ -151,6 +151,8 @@ jobs:
           test -d ios/App/opencv/include/opencv2/stitching && echo "stitching OK"
 
       - name: Sync Capacitor & Install Pods
+        env:
+          OPENCV_IOS_ENABLED: '1'
         run: |
           pnpm install --frozen-lockfile
           pnpm build
