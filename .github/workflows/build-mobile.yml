@@ -140,7 +140,11 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
           npx cap sync ios
+          # Raise iOS deployment target so the plugin podspec (14.0) and OpenCV resolve cleanly
+          /usr/bin/sed -i '' "s/^platform :ios, '1[0-9]\.[0-9]*'/platform :ios, '15.0'/" ios/App/Podfile
+          grep -n "platform :ios" ios/App/Podfile
           grep -n "CapacitorOmnisphereStitcher" ios/App/Podfile
+          cd ios/App && pod install --repo-update
 
       - name: Build Unsigned iOS Archive
         run: |
