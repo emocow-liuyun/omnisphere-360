@@ -60,7 +60,7 @@ export function App() {
   const [aeAfStatus, setAeAfStatus] = useState<AeAfStatus>('unlocked');
   const [sensorSource, setSensorSource] = useState<'native' | 'web-imu' | 'virtual'>('virtual');
   const [cameraMode, setCameraMode] = useState<'live' | 'simulation'>('simulation');
-  const [fov, setFov] = useState({ h: 62, v: 48 });
+  const [fov, setFov] = useState({ long: 68, h: 68, v: 53 });
   const [orientation, setOrientation] = useState<EulerOrientation>({
     yawDeg: 0,
     pitchDeg: 0,
@@ -137,7 +137,7 @@ export function App() {
       try {
         const res = await runPanoramaStitch(capturedFrames, {
           jobId,
-          outputWidth: 2048,
+          outputWidth: 4096,
           jpegQuality: 0.92,
           warpMode: modeRef.current === 'wide180' ? 'cylindrical' : 'spherical',
           onProgress: (p) => {
@@ -199,8 +199,7 @@ export function App() {
           cameraModeRef.current,
           videoRef.current,
           poseSnapshot,
-          fovRef.current.h,
-          fovRef.current.v
+          fovRef.current.long
         );
 
         if (sessionIdRef.current !== mySessionId) return;
@@ -222,8 +221,8 @@ export function App() {
           width: snap.width,
           height: snap.height,
           orientation: poseSnapshot,
-          fovHorizontalDeg: fovRef.current.h,
-          fovVerticalDeg: fovRef.current.v,
+          fovHorizontalDeg: snap.fovHorizontalDeg,
+          fovVerticalDeg: snap.fovVerticalDeg,
           capturedAtMs: Date.now(),
         };
 
@@ -319,7 +318,7 @@ export function App() {
       }
       cameraHandleRef.current = cam;
       setCameraMode(cam.mode);
-      setFov({ h: cam.fovHorizontalDeg, v: cam.fovVerticalDeg });
+      setFov({ long: cam.fovLongDeg, h: cam.fovHorizontalDeg, v: cam.fovVerticalDeg });
       if (videoRef.current && cam.stream) {
         videoRef.current.srcObject = cam.stream;
         await videoRef.current.play().catch(() => {});
@@ -459,8 +458,7 @@ export function App() {
         'simulation',
         null,
         pose,
-        fovRef.current.h,
-        fovRef.current.v
+        fovRef.current.long
       );
       demoFrames.push({
         id: `demo-${t.id}`,
@@ -469,8 +467,8 @@ export function App() {
         width: snap.width,
         height: snap.height,
         orientation: pose,
-        fovHorizontalDeg: fovRef.current.h,
-        fovVerticalDeg: fovRef.current.v,
+        fovHorizontalDeg: snap.fovHorizontalDeg,
+        fovVerticalDeg: snap.fovVerticalDeg,
         capturedAtMs: Date.now(),
       });
     }

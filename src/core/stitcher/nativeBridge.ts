@@ -48,8 +48,15 @@ export interface NativeAeAfLockResult {
   awbLocked: boolean;
 }
 
+export interface NativeCameraIntrinsics {
+  available: boolean;
+  fovLongDeg: number;
+  fovShortDeg: number;
+}
+
 export interface OmniStitcherPlugin {
   isNativeStitcherAvailable(): Promise<{ available: boolean; opencvVersion: string }>;
+  getCameraIntrinsics(): Promise<NativeCameraIntrinsics>;
   lockExposureAndFocus(options: { locked: boolean }): Promise<NativeAeAfLockResult>;
   startMotionUpdates(options: { rateHz: number }): Promise<void>;
   stopMotionUpdates(): Promise<void>;
@@ -68,6 +75,9 @@ export const OmniStitcher = registerPlugin<OmniStitcherPlugin>('OmniStitcher', {
   web: async () => ({
     async isNativeStitcherAvailable() {
       return { available: false, opencvVersion: 'web-cpu-canvas-fallback' };
+    },
+    async getCameraIntrinsics() {
+      return { available: false, fovLongDeg: 68, fovShortDeg: 53 };
     },
     async lockExposureAndFocus() {
       return {

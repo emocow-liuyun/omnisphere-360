@@ -30,7 +30,6 @@ export function prepareFrameProjection(cam: CameraProjectionParams): PreparedFra
   });
   const tanHalfH = Math.tan((cam.fovHorizontalDeg * 0.5) * DEG_TO_RAD);
   const tanHalfV = Math.tan((cam.fovVerticalDeg * 0.5) * DEG_TO_RAD);
-  // Optical axis in world is camToWorld * (0, 0, -1)
   const opticalAxisWorld = {
     x: -pose.camToWorld[2],
     y: -pose.camToWorld[5],
@@ -54,7 +53,6 @@ export function projectWorldRayWithPrepared(
   rayZ: number,
   prep: PreparedFrameProjection
 ): { u: number; v: number; weight: number } | null {
-  // Fast cone culling before 3x3 matrix multiply
   const dotAxis =
     rayX * prep.opticalAxisWorld.x +
     rayY * prep.opticalAxisWorld.y +
@@ -71,9 +69,10 @@ export function projectWorldRayWithPrepared(
     return null;
   }
 
+  // Center-priority score in (0, 1]: 1.0 at optical center, smoothly 0 at border
   const wx = Math.cos(nx * Math.PI * 0.5);
   const wy = Math.cos(ny * Math.PI * 0.5);
-  const weight = Math.max(0.0001, wx * wx * wy * wy);
+  const weight = Math.max(0.0001, wx * wy);
 
   return {
     u: (nx + 1) * 0.5,
@@ -82,10 +81,6 @@ export function projectWorldRayWithPrepared(
   };
 }
 
-/**
- * Project a world unit ray (dx, dy, dz) into normalized camera image coordinates (u, v) in [0, 1]^2.
- * Uses the exact same CameraPose rotation convention as SphereCaptureHUD and SimulationCamera.
- */
 export function projectWorldRayToFrameUV(
   rayX: number,
   rayY: number,
@@ -95,12 +90,6 @@ export function projectWorldRayToFrameUV(
   return projectWorldRayWithPrepared(rayX, rayY, rayZ, prepareFrameProjection(cam));
 }
 
-/**
- * Convert equirectangular normalized coordinates (u in [0,1], v in [0,1])
- * to a world unit ray.
- * u = 0.5 -> yaw = 0° (-Z), u = 0 -> -180°, u = 1 -> +180°
- * v = 0 -> pitch = +90° (zenith), v = 1 -> pitch = -90° (nadir)
- */
 export function equirectUVToWorldRay(u: number, v: number): { x: number; y: number; z: number } {
   const yaw = (u - 0.5) * Math.PI * 2;
   const pitch = (0.5 - v) * Math.PI;
@@ -121,7 +110,7 @@ interface LoadedFramePixels {
   meanLuma: number;
 }
 
-async function loadFramePixels(frame: CapturedFrame, maxSampleWidth = 640): Promise<LoadedFramePixels> {
+async function loadFramePixels(frame: CapturedFrame, maxSampleWidth = 720): Promise<LoadedFramePixels> {
   const img = new Image();
   img.crossOrigin = 'anonymous';
   await new Promise<void>((resolve, reject) => {
@@ -169,9 +158,155 @@ async function loadFramePixels(frame: CapturedFrame, maxSampleWidth = 640): Prom
   };
 }
 
+function sampleBilinearRGB(
+  item: LoadedFramePixels,
+  u: number,
+  v: number,
+  gain: number
+): [number, number, number] {
+  const sx = u * (item.width - 1);
+  const sy = v * (item.height - 1);
+  const x0 = Math.floor(sx);
+  const y0 = Math.floor(sy);
+  const x1 = Math.min(item.width - 1, x0 + 1);
+  const y1 = Math.min(item.height - 1, y0 + 1);
+  const fx = sx - x0;
+  const fy = sy - y0;
+
+  const idx00 = (y0 * item.width + x0) * 4;
+  const idx10 = (y0 * item.width + x1) * 4;
+  const idx01 = (y1 * item.width + x0) * 4;
+  const idx11 = (y1 * item.width + x1) * 4;
+
+  const w00 = (1 - fx) * (1 - fy);
+  const w10 = fx * (1 - fy);
+  const w01 = (1 - fx) * fy;
+  const w11 = fx * fy;
+
+  return [
+    (item.data[idx00] * w00 + item.data[idx10] * w10 + item.data[idx01] * w01 + item.data[idx11] * w11) * gain,
+    (item.data[idx00 + 1] * w00 + item.data[idx10 + 1] * w10 + item.data[idx01 + 1] * w01 + item.data[idx11 + 1] * w11) * gain,
+    (item.data[idx00 + 2] * w00 + item.data[idx10 + 2] * w10 + item.data[idx01 + 2] * w01 + item.data[idx11 + 2] * w11) * gain,
+  ];
+}
+
 /**
- * On-device CPU/Canvas Equirectangular Stitcher with precomputed pose matrices,
- * cone culling, exposure gain compensation, raised-cosine feathering, and GPano XMP injection.
+ * Refine per-frame (yaw, pitch) offsets against overlapping neighbors using fast
+ * spherical SAD correlation on a coarse 128x64 grid to eliminate indoor IMU drift.
+ */
+function refineFramePoses(loaded: LoadedFramePixels[], gains: number[]): void {
+  if (loaded.length < 2) return;
+
+  // Anchor frame 0; sequentially refine each subsequent frame against already-refined frames
+  const sampleRays: { x: number; y: number; z: number }[] = [];
+  const gridW = 96;
+  const gridH = 48;
+  for (let gy = 0; gy < gridH; gy++) {
+    const pitch = (0.5 - (gy + 0.5) / gridH) * Math.PI;
+    const cosP = Math.cos(pitch);
+    const sinP = Math.sin(pitch);
+    for (let gx = 0; gx < gridW; gx++) {
+      const yaw = ((gx + 0.5) / gridW - 0.5) * Math.PI * 2;
+      sampleRays.push({ x: Math.sin(yaw) * cosP, y: sinP, z: -Math.cos(yaw) * cosP });
+    }
+  }
+
+  for (let i = 1; i < loaded.length; i++) {
+    const curr = loaded[i];
+    // Find overlapping rays with earlier frames
+    const overlapRays: { ray: { x: number; y: number; z: number }; refLuma: number }[] = [];
+    for (const ray of sampleRays) {
+      const dot =
+        ray.x * curr.prep.opticalAxisWorld.x +
+        ray.y * curr.prep.opticalAxisWorld.y +
+        ray.z * curr.prep.opticalAxisWorld.z;
+      if (dot < curr.prep.cosHalfDiag) continue;
+
+      let bestW = 0;
+      let refLuma = 0;
+      for (let j = 0; j < i; j++) {
+        const p = projectWorldRayWithPrepared(ray.x, ray.y, ray.z, loaded[j].prep);
+        if (p && p.weight > bestW) {
+          bestW = p.weight;
+          const [r, g, b] = sampleBilinearRGB(loaded[j], p.u, p.v, gains[j]);
+          refLuma = 0.299 * r + 0.587 * g + 0.114 * b;
+        }
+      }
+      if (bestW > 0.15) {
+        overlapRays.push({ ray, refLuma });
+      }
+    }
+
+    if (overlapRays.length < 12) continue;
+
+    let bestDyaw = 0;
+    let bestDpitch = 0;
+    let bestSad = Infinity;
+
+    // Coarse-to-fine 2D angular search (±4° in 1° steps, then ±0.75° in 0.25° steps)
+    for (const step of [1.0, 0.35]) {
+      const centerY = bestDyaw;
+      const centerP = bestDpitch;
+      const range = step === 1.0 ? 4 : 2;
+      for (let iy = -range; iy <= range; iy++) {
+        for (let ip = -range; ip <= range; ip++) {
+          const dy = centerY + iy * step;
+          const dp = centerP + ip * step;
+          const candPrep = prepareFrameProjection({
+            yawDeg: curr.frame.orientation.yawDeg + dy,
+            pitchDeg: Math.max(-89.9, Math.min(89.9, curr.frame.orientation.pitchDeg + dp)),
+            rollDeg: curr.frame.orientation.rollDeg,
+            fovHorizontalDeg: curr.frame.fovHorizontalDeg,
+            fovVerticalDeg: curr.frame.fovVerticalDeg,
+          });
+
+          let sad = 0;
+          let hits = 0;
+          for (const item of overlapRays) {
+            const p = projectWorldRayWithPrepared(item.ray.x, item.ray.y, item.ray.z, candPrep);
+            if (!p) continue;
+            const [r, g, b] = sampleBilinearRGB(curr, p.u, p.v, gains[i]);
+            const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+            sad += Math.abs(luma - item.refLuma);
+            hits++;
+          }
+          if (hits >= 10) {
+            const meanSad = sad / hits;
+            if (meanSad < bestSad) {
+              bestSad = meanSad;
+              bestDyaw = dy;
+              bestDpitch = dp;
+            }
+          }
+        }
+      }
+    }
+
+    if (bestDyaw !== 0 || bestDpitch !== 0) {
+      curr.frame = {
+        ...curr.frame,
+        orientation: {
+          ...curr.frame.orientation,
+          yawDeg: curr.frame.orientation.yawDeg + bestDyaw,
+          pitchDeg: Math.max(-89.9, Math.min(89.9, curr.frame.orientation.pitchDeg + bestDpitch)),
+        },
+      };
+      curr.prep = prepareFrameProjection({
+        yawDeg: curr.frame.orientation.yawDeg,
+        pitchDeg: curr.frame.orientation.pitchDeg,
+        rollDeg: curr.frame.orientation.rollDeg,
+        fovHorizontalDeg: curr.frame.fovHorizontalDeg,
+        fovVerticalDeg: curr.frame.fovVerticalDeg,
+      });
+    }
+  }
+}
+
+/**
+ * On-device CPU/Canvas Equirectangular Stitcher with:
+ * - Coarse-to-fine 2D angular pose refinement (eliminates indoor IMU drift)
+ * - Sharp Voronoi seam selection with narrow 10% boundary feathering (eliminates ghosting!)
+ * - Exposure gain compensation & GPano XMP injection
  */
 export async function stitchFramesEquirectangular(
   frames: CapturedFrame[],
@@ -203,12 +338,12 @@ export async function stitchFramesEquirectangular(
 
   const loaded: LoadedFramePixels[] = [];
   for (let i = 0; i < frames.length; i++) {
-    loaded.push(await loadFramePixels(frames[i], outputWidth >= 4096 ? 960 : 640));
+    loaded.push(await loadFramePixels(frames[i], outputWidth >= 4096 ? 960 : 720));
     if (i % 4 === 0) {
       emit?.({
         jobId,
         stage: 'preparing',
-        progress: 0.05 + (0.2 * (i + 1)) / frames.length,
+        progress: 0.05 + (0.15 * (i + 1)) / frames.length,
         message: `已加载 ${i + 1}/${frames.length} 帧`,
         engine: 'cpu-canvas',
       });
@@ -219,8 +354,17 @@ export async function stitchFramesEquirectangular(
   const targetLuma = lumas[Math.floor(lumas.length / 2)] || 128;
   const gains = loaded.map((l) => {
     const rawGain = targetLuma / Math.max(24, l.meanLuma);
-    return Math.max(0.78, Math.min(1.28, rawGain));
+    return Math.max(0.82, Math.min(1.22, rawGain));
   });
+
+  emit?.({
+    jobId,
+    stage: 'projecting',
+    progress: 0.22,
+    message: '正在执行重叠区域图像配准与姿态微调...',
+    engine: 'cpu-canvas',
+  });
+  refineFramePoses(loaded, gains);
 
   const outCanvas = document.createElement('canvas');
   outCanvas.width = outputWidth;
@@ -248,66 +392,62 @@ export async function stitchFramesEquirectangular(
         const rayY = sinP;
         const rayZ = -Math.cos(yaw) * cosP;
 
-        let rAcc = 0;
-        let gAcc = 0;
-        let bAcc = 0;
-        let wAcc = 0;
+        // Sharp Voronoi seam: track top-2 closest-to-center frames only
+        let bestIdx = -1;
+        let bestScore = -1;
+        let bestU = 0;
+        let bestV = 0;
+
+        let secondIdx = -1;
+        let secondScore = -1;
+        let secondU = 0;
+        let secondV = 0;
 
         for (let fIdx = 0; fIdx < loaded.length; fIdx++) {
-          const item = loaded[fIdx];
-          const proj = projectWorldRayWithPrepared(rayX, rayY, rayZ, item.prep);
+          const proj = projectWorldRayWithPrepared(rayX, rayY, rayZ, loaded[fIdx].prep);
           if (!proj) continue;
 
-          const sx = proj.u * (item.width - 1);
-          const sy = proj.v * (item.height - 1);
-          const x0 = Math.floor(sx);
-          const y0 = Math.floor(sy);
-          const x1 = Math.min(item.width - 1, x0 + 1);
-          const y1 = Math.min(item.height - 1, y0 + 1);
-          const fx = sx - x0;
-          const fy = sy - y0;
+          if (proj.weight > bestScore) {
+            secondIdx = bestIdx;
+            secondScore = bestScore;
+            secondU = bestU;
+            secondV = bestV;
 
-          const idx00 = (y0 * item.width + x0) * 4;
-          const idx10 = (y0 * item.width + x1) * 4;
-          const idx01 = (y1 * item.width + x0) * 4;
-          const idx11 = (y1 * item.width + x1) * 4;
-
-          const w00 = (1 - fx) * (1 - fy);
-          const w10 = fx * (1 - fy);
-          const w01 = (1 - fx) * fy;
-          const w11 = fx * fy;
-
-          const gain = gains[fIdx];
-          const r =
-            (item.data[idx00] * w00 +
-              item.data[idx10] * w10 +
-              item.data[idx01] * w01 +
-              item.data[idx11] * w11) *
-            gain;
-          const g =
-            (item.data[idx00 + 1] * w00 +
-              item.data[idx10 + 1] * w10 +
-              item.data[idx01 + 1] * w01 +
-              item.data[idx11 + 1] * w11) *
-            gain;
-          const b =
-            (item.data[idx00 + 2] * w00 +
-              item.data[idx10 + 2] * w10 +
-              item.data[idx01 + 2] * w01 +
-              item.data[idx11 + 2] * w11) *
-            gain;
-
-          rAcc += r * proj.weight;
-          gAcc += g * proj.weight;
-          bAcc += b * proj.weight;
-          wAcc += proj.weight;
+            bestIdx = fIdx;
+            bestScore = proj.weight;
+            bestU = proj.u;
+            bestV = proj.v;
+          } else if (proj.weight > secondScore) {
+            secondIdx = fIdx;
+            secondScore = proj.weight;
+            secondU = proj.u;
+            secondV = proj.v;
+          }
         }
 
         const outIdx = (y * outputWidth + x) * 4;
-        if (wAcc > 0) {
-          outBuf[outIdx] = Math.min(255, Math.round(rAcc / wAcc));
-          outBuf[outIdx + 1] = Math.min(255, Math.round(gAcc / wAcc));
-          outBuf[outIdx + 2] = Math.min(255, Math.round(bAcc / wAcc));
+        if (bestIdx >= 0) {
+          const [r1, g1, b1] = sampleBilinearRGB(loaded[bestIdx], bestU, bestV, gains[bestIdx]);
+
+          // Narrow 10% Voronoi seam feathering: only blend right along the seam boundary
+          const ratio = secondIdx >= 0 ? secondScore / Math.max(1e-5, bestScore) : 0;
+          if (secondIdx >= 0 && ratio > 0.88) {
+            const [r2, g2, b2] = sampleBilinearRGB(
+              loaded[secondIdx],
+              secondU,
+              secondV,
+              gains[secondIdx]
+            );
+            const alpha = ((ratio - 0.88) / 0.12) * 0.5; // 0..0.5 at exact Voronoi edge
+            const invA = 1 - alpha;
+            outBuf[outIdx] = Math.min(255, Math.round(r1 * invA + r2 * alpha));
+            outBuf[outIdx + 1] = Math.min(255, Math.round(g1 * invA + g2 * alpha));
+            outBuf[outIdx + 2] = Math.min(255, Math.round(b1 * invA + b2 * alpha));
+          } else {
+            outBuf[outIdx] = Math.min(255, Math.round(r1));
+            outBuf[outIdx + 1] = Math.min(255, Math.round(g1));
+            outBuf[outIdx + 2] = Math.min(255, Math.round(b1));
+          }
           outBuf[outIdx + 3] = 255;
         } else {
           outBuf[outIdx] = 8;
@@ -323,7 +463,7 @@ export async function stitchFramesEquirectangular(
       jobId,
       stage: yEnd < outputHeight * 0.7 ? 'projecting' : 'blending',
       progress: bandProgress,
-      message: `球面反投影与升余弦羽化融合 (${Math.round((yEnd / outputHeight) * 100)}%)`,
+      message: `球面反投影与锐利接缝融合 (${Math.round((yEnd / outputHeight) * 100)}%)`,
       engine: 'cpu-canvas',
     });
 
@@ -332,7 +472,8 @@ export async function stitchFramesEquirectangular(
 
   outCtx.putImageData(outImage, 0, 0);
 
-  const coveragePercent = computeActualFrustumCoveragePercent(frames);
+  const refinedFrames = loaded.map((l) => l.frame);
+  const coveragePercent = computeActualFrustumCoveragePercent(refinedFrames);
   const isFullSphere = coveragePercent >= 95;
 
   emit?.({
@@ -354,8 +495,6 @@ export async function stitchFramesEquirectangular(
     engine: 'cpu-canvas',
   });
 
-  // The encoded JPEG is the full 2:1 equirectangular canvas (uncovered regions are dark-filled),
-  // so GPano cropped area matches the encoded image dimensions.
   const xmpBytes = injectGPanoXmpIntoJpeg(rawBytes, {
     projectionType: 'equirectangular',
     usePanoramaViewer: true,

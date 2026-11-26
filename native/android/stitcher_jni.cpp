@@ -105,16 +105,29 @@ Java_com_omnisphere_camera360_OmniStitcherPlugin_nativeStitchPanorama(
         }
 
         cv::Ptr<cv::Stitcher> stitcher = cv::Stitcher::create(cv::Stitcher::PANORAMA);
+        stitcher->setFeaturesFinder(cv::ORB::create(2000));
+        stitcher->setPanoConfidenceThresh(0.45);
+        stitcher->setRegistrationResol(0.6);
+        stitcher->setSeamEstimationResol(0.15);
+        stitcher->setCompositingResol(cv::Stitcher::ORIG_RESOL);
+        stitcher->setWaveCorrection(true);
         if (spherical) {
             stitcher->setWarper(cv::makePtr<cv::SphericalWarper>());
         } else {
             stitcher->setWarper(cv::makePtr<cv::CylindricalWarper>());
         }
         stitcher->setExposureCompensator(cv::makePtr<cv::detail::BlocksGainCompensator>());
+        stitcher->setSeamFinder(cv::makePtr<cv::detail::GraphCutSeamFinder>(
+            cv::detail::GraphCutSeamFinderBase::COST_COLOR_GRAD
+        ));
         stitcher->setBlender(cv::makePtr<cv::detail::MultiBandBlender>(false, 5));
 
         cv::Mat pano;
         cv::Stitcher::Status status = stitcher->stitch(images, pano);
+        if (status != cv::Stitcher::OK || pano.empty()) {
+            stitcher->setPanoConfidenceThresh(0.3);
+            status = stitcher->stitch(images, pano);
+        }
         if (status != cv::Stitcher::OK || pano.empty()) {
             return makeError(static_cast<jint>(status));
         }

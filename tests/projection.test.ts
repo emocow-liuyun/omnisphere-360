@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createCameraPose, mulMat3Vec3 } from '../src/core/cameraPose';
+import { computeFovForDimensions } from '../src/core/cameraService';
 import {
   equirectUVToWorldRay,
   projectWorldRayToFrameUV,
@@ -72,5 +73,15 @@ describe('equirectangular projection & CameraPose round-trip math', () => {
       fovVerticalDeg: 46,
     });
     expect(proj).toBeNull();
+  });
+
+  it('computes consistent horizontal/vertical FOV for both landscape and portrait video streams', () => {
+    const land = computeFovForDimensions(1080, 810, 68);
+    expect(land.fovHorizontalDeg).toBeCloseTo(68, 4);
+    expect(land.fovVerticalDeg).toBeCloseTo(53.67, 1);
+
+    const port = computeFovForDimensions(810, 1080, 68);
+    expect(port.fovVerticalDeg).toBeCloseTo(68, 4);
+    expect(port.fovHorizontalDeg).toBeCloseTo(53.67, 1);
   });
 });

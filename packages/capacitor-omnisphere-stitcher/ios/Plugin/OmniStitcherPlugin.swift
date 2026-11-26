@@ -9,6 +9,7 @@ public class OmniStitcherPlugin: CAPPlugin, CAPBridgedPlugin {
     public let jsName = "OmniStitcher"
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "isNativeStitcherAvailable", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getCameraIntrinsics", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "lockExposureAndFocus", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "startMotionUpdates", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stopMotionUpdates", returnType: CAPPluginReturnPromise),
@@ -33,6 +34,29 @@ public class OmniStitcherPlugin: CAPPlugin, CAPBridgedPlugin {
         call.resolve([
             "available": OpenCVStitcher.isAvailable(),
             "opencvVersion": OpenCVStitcher.openCVVersion()
+        ])
+    }
+
+    @objc func getCameraIntrinsics(_ call: CAPPluginCall) {
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
+            call.resolve([
+                "available": false,
+                "fovLongDeg": 68.0,
+                "fovShortDeg": 53.0
+            ])
+            return
+        }
+        let fovLong = Double(device.activeFormat.videoFieldOfView)
+        let dims = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+        let aspect = dims.width > 0 && dims.height > 0
+            ? Double(min(dims.width, dims.height)) / Double(max(dims.width, dims.height))
+            : 0.75
+        let rad2deg = 180.0 / Double.pi
+        let fovShort = 2.0 * atan(tan((fovLong * 0.5) / rad2deg) * aspect) * rad2deg
+        call.resolve([
+            "available": true,
+            "fovLongDeg": fovLong,
+            "fovShortDeg": fovShort
         ])
     }
 

@@ -1,26 +1,67 @@
+import { Capacitor } from '@capacitor/core';
 import type { EulerOrientation } from './types';
 import { createCameraPose, mulMat3Vec3 } from './cameraPose';
+import { OmniStitcher } from './stitcher/nativeBridge';
 
 export interface CameraStreamHandle {
   stream: MediaStream | null;
   mode: 'live' | 'simulation';
+  fovLongDeg: number;
   fovHorizontalDeg: number;
   fovVerticalDeg: number;
   stop: () => void;
 }
 
+const DEG_TO_RAD = Math.PI / 180;
+const RAD_TO_DEG = 180 / Math.PI;
+
 /**
- * Acquire rear wide-angle camera stream via WebRTC getUserMedia.
- * Explicitly distinguishes 'live' vs 'simulation' mode so live sessions never silently
- * fall back to synthetic frames.
+ * Compute exact horizontal & vertical FOV (degrees) for a frame of size (width x height)
+ * given the camera sensor's long-edge FOV (degrees).
+ */
+export function computeFovForDimensions(
+  width: number,
+  height: number,
+  fovLongDeg: number
+): { fovHorizontalDeg: number; fovVerticalDeg: number } {
+  const w = Math.max(1, width);
+  const h = Math.max(1, height);
+  const tanHalfLong = Math.tan((fovLongDeg * 0.5) * DEG_TO_RAD);
+  if (w >= h) {
+    const fovHorizontalDeg = fovLongDeg;
+    const fovVerticalDeg = 2 * Math.atan(tanHalfLong * (h / w)) * RAD_TO_DEG;
+    return { fovHorizontalDeg, fovVerticalDeg };
+  }
+  const fovVerticalDeg = fovLongDeg;
+  const fovHorizontalDeg = 2 * Math.atan(tanHalfLong * (w / h)) * RAD_TO_DEG;
+  return { fovHorizontalDeg, fovVerticalDeg };
+}
+
+/**
+ * Acquire rear wide-angle camera stream via WebRTC getUserMedia and query
+ * physical camera intrinsics on native iOS/Android when available.
  */
 export async function startCameraStream(): Promise<CameraStreamHandle> {
+  let fovLongDeg = 68;
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const intrinsics = await OmniStitcher.getCameraIntrinsics();
+      if (intrinsics.fovLongDeg > 25 && intrinsics.fovLongDeg < 130) {
+        fovLongDeg = intrinsics.fovLongDeg;
+      }
+    } catch {
+      // keep default 68°
+    }
+  }
+
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+    const { fovHorizontalDeg, fovVerticalDeg } = computeFovForDimensions(960, 720, fovLongDeg);
     return {
       stream: null,
       mode: 'simulation',
-      fovHorizontalDeg: 62,
-      fovVerticalDeg: 48,
+      fovLongDeg,
+      fovHorizontalDeg,
+      fovVerticalDeg,
       stop: () => {},
     };
   }
@@ -30,28 +71,37 @@ export async function startCameraStream(): Promise<CameraStreamHandle> {
       audio: false,
       video: {
         facingMode: { ideal: 'environment' },
-        width: { ideal: 1920 },
+        width: { ideal: 1440 },
         height: { ideal: 1080 },
       },
     });
 
+    const track = stream.getVideoTracks()[0];
+    const settings = track?.getSettings?.();
+    const vw = settings?.width ?? 1280;
+    const vh = settings?.height ?? 960;
+    const { fovHorizontalDeg, fovVerticalDeg } = computeFovForDimensions(vw, vh, fovLongDeg);
+
     return {
       stream,
       mode: 'live',
-      fovHorizontalDeg: 60,
-      fovVerticalDeg: 46,
+      fovLongDeg,
+      fovHorizontalDeg,
+      fovVerticalDeg,
       stop: () => {
-        for (const track of stream.getTracks()) {
-          track.stop();
+        for (const t of stream.getTracks()) {
+          t.stop();
         }
       },
     };
   } catch {
+    const { fovHorizontalDeg, fovVerticalDeg } = computeFovForDimensions(960, 720, fovLongDeg);
     return {
       stream: null,
       mode: 'simulation',
-      fovHorizontalDeg: 62,
-      fovVerticalDeg: 48,
+      fovLongDeg,
+      fovHorizontalDeg,
+      fovVerticalDeg,
       stop: () => {},
     };
   }
@@ -59,18 +109,39 @@ export async function startCameraStream(): Promise<CameraStreamHandle> {
 
 /**
  * Capture a JPEG frame strictly according to camera mode:
- * - 'live': requires ready <video> element; throws if video stream is not ready (never fakes frames).
- * - 'simulation': renders orientation-consistent procedural 3D world using the exact same CameraPose.
+ * - 'live': preserves the video stream's natural aspect ratio (no portrait->landscape crop distortion!)
+ *   and returns exact FOV matching the captured pixel dimensions.
+ * - 'simulation': renders orientation-consistent procedural 3D world using CameraPose.
  */
 export function captureFrameStrict(
   mode: 'live' | 'simulation',
   videoEl: HTMLVideoElement | null,
   orientation: EulerOrientation,
-  fovHorizontalDeg: number,
-  fovVerticalDeg: number
-): { dataUrl: string; width: number; height: number } {
-  const width = 960;
-  const height = 720;
+  fovLongDeg: number
+): {
+  dataUrl: string;
+  width: number;
+  height: number;
+  fovHorizontalDeg: number;
+  fovVerticalDeg: number;
+} {
+  let width = 960;
+  let height = 720;
+
+  if (mode === 'live') {
+    if (!videoEl || videoEl.readyState < 2 || videoEl.videoWidth <= 0 || videoEl.videoHeight <= 0) {
+      throw new Error('相机视频流尚未就绪，请稍候再试');
+    }
+    const vw = videoEl.videoWidth;
+    const vh = videoEl.videoHeight;
+    const maxDim = 1080;
+    const scale = Math.min(1, maxDim / Math.max(vw, vh));
+    width = Math.max(2, Math.round(vw * scale));
+    height = Math.max(2, Math.round(vh * scale));
+  }
+
+  const { fovHorizontalDeg, fovVerticalDeg } = computeFovForDimensions(width, height, fovLongDeg);
+
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -79,42 +150,21 @@ export function captureFrameStrict(
     throw new Error('2D canvas context unavailable');
   }
 
-  if (mode === 'live') {
-    if (!videoEl || videoEl.readyState < 2 || videoEl.videoWidth <= 0) {
-      throw new Error('相机视频流尚未就绪，请稍候再试');
-    }
-    const vw = videoEl.videoWidth;
-    const vh = videoEl.videoHeight;
-    const targetAspect = width / height;
-    const videoAspect = vw / vh;
-    let sx = 0;
-    let sy = 0;
-    let sw = vw;
-    let sh = vh;
-    if (videoAspect > targetAspect) {
-      sw = vh * targetAspect;
-      sx = (vw - sw) * 0.5;
-    } else {
-      sh = vw / targetAspect;
-      sy = (vh - sh) * 0.5;
-    }
-    ctx.drawImage(videoEl, sx, sy, sw, sh, 0, 0, width, height);
+  if (mode === 'live' && videoEl) {
+    ctx.drawImage(videoEl, 0, 0, width, height);
   } else {
     renderSimulatedWorldFrame(ctx, width, height, orientation, fovHorizontalDeg, fovVerticalDeg);
   }
 
   return {
-    dataUrl: canvas.toDataURL('image/jpeg', 0.9),
+    dataUrl: canvas.toDataURL('image/jpeg', 0.92),
     width,
     height,
+    fovHorizontalDeg,
+    fovVerticalDeg,
   };
 }
 
-/**
- * Render an orientation-consistent procedural 3D environment using the unified CameraPose
- * (`camToWorld` matrix) so simulated captures match HUD and stitcher geometry identically,
- * including non-zero yaw, pitch, and roll.
- */
 function renderSimulatedWorldFrame(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -130,7 +180,6 @@ function renderSimulatedWorldFrame(
   const tanV = Math.tan((fovV * 0.5) * deg2rad);
   const pose = createCameraPose(orientation);
 
-  // Sun direction at yaw=45°, pitch=28°
   const sunX = Math.sin(45 * deg2rad) * Math.cos(28 * deg2rad);
   const sunY = Math.sin(28 * deg2rad);
   const sunZ = -Math.cos(45 * deg2rad) * Math.cos(28 * deg2rad);
